@@ -131,12 +131,14 @@ int keycommands(){ // Reads keypress at any time and prints 'Done!' if key is f,
         }
         else if(inp =='2'){
             //disable process
+            printf("Shuting down process..\n");
             sem_wait(&disabled_mutex);
                 disabled = true;
             sem_post(&disabled_mutex);
         }
         else if(inp =='3'){
             //enable process
+            printf("Starting process..\n");
             sem_wait(&disabled_mutex);
                 disabled = false;
             sem_post(&disabled_mutex);
@@ -296,7 +298,7 @@ int checkLeader(){
             sem_post(&leader_mutex);
             sem_post(&election_timer_mutex);
         }
-        else if(leader_pid > 0){
+        else if(leader_pid > 0 && !disabled){
             if(election_timer < 0){
                 if(leader_pid != pid){
                     printf("Sending ALIVE \n");
