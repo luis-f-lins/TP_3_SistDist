@@ -24,6 +24,7 @@
 #include <assert.h>
 #include <string.h>
 #include <unistd.h> 
+#include <signal.h> 
 #include <sys/socket.h> 
 #include <sys/types.h> 
 #include <stdlib.h> 
@@ -45,6 +46,7 @@ sem_t disabled_mutex, leader_mutex, sent_msgs_count, recv_msgs_count, election_t
 clock_t election_timer = -1;
 bool disabled = false;
 int leader_pid = -1, pid, max_id;
+
 
 int getch(void) {
       int c=0;
@@ -106,6 +108,16 @@ int sendMessages(int code, int id,int value = -1){
     sem_post(&sent_msgs_count);
     return 0;
 }
+
+void signal_handler1(int signal)
+{
+                    printf("Sending FORCED ALIVE \n");
+                    sendMessages(4, (3000 + leader_pid)); //sends alive msg
+                    sem_wait(&election_timer_mutex);
+                        election_timer = clock();
+                    sem_post(&election_timer_mutex);
+}
+
 
 int keycommands(){ // Reads keypress at any time and prints 'Done!' if key is f, and ends program is key is g.
     char inp;
@@ -253,6 +265,10 @@ int recvMessages(){
 }
 
 int checkLeader(){
+    
+    void (*hand_pt1)(int);
+    hand_pt1 = &signal_handler1;
+    
     while(1){
         // printf("%ld\n", (clock() - election_timer));
         if(leader_pid < 0 && election_timer < 0){
@@ -303,8 +319,15 @@ int checkLeader(){
                 sem_post(&election_timer_mutex);
             }
         }
+        
+        signal(SIGUSR1,signal_handler1);
+        
         sleep(2);        
     }
+}
+
+void kill(thread arg){
+    
 }
 
 int main(int argc, char** argv) {
@@ -332,6 +355,7 @@ int main(int argc, char** argv) {
     for(int i = 0; i < sizeof(myThreads); i++){
         myThreads[i].join();
     }
+
     sem_destroy(&disabled_mutex); 
     sem_destroy(&sent_msgs_count); 
     sem_destroy(&recv_msgs_count); 
