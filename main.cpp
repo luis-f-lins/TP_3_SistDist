@@ -45,7 +45,7 @@ using namespace std;
 sem_t disabled_mutex, leader_mutex, sent_msgs_count_mutex, recv_msgs_count_mutex, election_timer_mutex;
 clock_t election_timer = -1;
 bool disabled = false;
-int leader_pid = -1, pid, max_id, sent_msgs_count, recv_msgs_count;
+int leader_id = -1, id, max_id, sent_msgs_count, recv_msgs_count;
 
 
 int getch(void) {
@@ -92,12 +92,11 @@ int sendMessages(int code, int id){
 
         //connect to server
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0){ 
-        // printf("\nConnection error\n"); 
         close(sock);
         return -1; 
     } 
 
-    msg = to_string(code) + "|" + to_string(pid);
+    msg = to_string(code) + "|" + to_string(id);
         
     send(sock , (const char *)msg.c_str(), 1024, 0);
     close(sock);
@@ -114,7 +113,7 @@ void signal_handler1(int signal)
 {
     if(!disabled){
         printf("Sending FORCED ALIVE \n");
-        sendMessages(4, (PORT + leader_pid)); //sends alive msg
+        sendMessages(4, (PORT + leader_id)); //sends alive msg
         sem_wait(&election_timer_mutex);
             election_timer = clock();
         sem_post(&election_timer_mutex);
@@ -147,7 +146,7 @@ int keycommands(){ // Reads keypress at any time and prints 'Done!' if key is f,
             sem_post(&disabled_mutex);
         }
         else if(inp =='4'){
-            printf("Sent messages : %d\nReceived messages : %d\nCurrent leader: %d\n", sent_msgs_count, recv_msgs_count, leader_pid);
+            printf("Sent messages : %d\nReceived messages : %d\nCurrent leader: %d\n", sent_msgs_count, recv_msgs_count, leader_id);
         }
         else if(inp =='5'){
             sem_wait(&recv_msgs_count_mutex);
@@ -187,7 +186,7 @@ int recvMessages(){
     } 
     address.sin_family = AF_INET; 
     address.sin_addr.s_addr = INADDR_ANY; 
-    address.sin_port = htons( PORT + pid ); 
+    address.sin_port = htons( PORT + id ); 
        
     // Forcefully attaching socket to the port 8080 
     if (::bind(server_fd, (struct sockaddr *)&address, sizeof(address))<0){ 
@@ -203,14 +202,13 @@ int recvMessages(){
 
     socklen_t len;
     while(1){
-        // valread = recvfrom(server_fd, (char *)buffer, 1024, MSG_WAITALL, ( struct sockaddr *) &address, (socklen_t*)&addrlen);
         if ((sock = accept(server_fd, (struct sockaddr *)&cliaddress, (socklen_t*)&cliaddrlen))<0){ 
             printf("Accept error\n");   
             exit(1); 
         }
         recv(sock , buffer, 1024, 0);
         close(sock);
-        // printf("Server recieved: %s\n",buffer);
+
         value = strtok(buffer, "|");
         while(value != NULL){
            msg[i] = atoi(value);
@@ -227,7 +225,7 @@ int recvMessages(){
         if(msg[0]==3){ //LIDER
             printf("Received LEADER\n");            
             sem_wait(&leader_mutex);
-                leader_pid = msg[1];
+                leader_id = msg[1];
             sem_post(&leader_mutex);
             sem_wait(&election_timer_mutex);
                 election_timer = -1;
@@ -239,16 +237,16 @@ int recvMessages(){
             switch(msg[0]){
                 case 1: //election 
                     printf("Received ELECTION\n");
-                    if(msg[1] < pid){ 
+                    if(msg[1] < id){ 
                         printf("Sending OK\n");
                         sendMessages(2, (PORT + msg[1])); //send OK to stop election
-                        printf("Starting election\n");
+                        printf("Starting new election\n");
                         for(int i = 1; i <= max_id; i++){
-                            if(i != pid)
+                            if(i != id)
                                 sendMessages(1, (PORT + i)); //start new election
                         }
                         sem_wait(&leader_mutex);
-                            leader_pid = -1; //If no response will become leader 
+                            leader_id = -1; //If no response will become leader 
                         sem_post(&leader_mutex);
                     }
                     sem_wait(&election_timer_mutex);
@@ -264,13 +262,13 @@ int recvMessages(){
                         sem_post(&election_timer_mutex);
                     break;
                 case 4: //ALIVE sends ALIVE-OK to leader
-                    if(leader_pid == pid){
-                        // printf("Sending ALIVE-OK\n");
+                    if(leader_id == id){
+                        printf("Sending ALIVE-OK\n");
                         sendMessages(5, (PORT + msg[1]));
                     }
                     break;
                 case 5: //ALIVE-OK
-                        // printf("Received ALIVE-OK\n");
+                        printf("Received ALIVE-OK\n");
                         sem_wait(&election_timer_mutex);
                             election_timer = -1;  //setting to -1 will resend ALIVE
                         sem_post(&election_timer_mutex);
@@ -287,10 +285,10 @@ int checkLeader(){
     hand_pt1 = &signal_handler1;
     
     while(1){
-        if(leader_pid < 0 && election_timer < 0){
+        if(leader_id < 0 && election_timer < 0){
             printf("Starting new election \n");
             for(int i = 1; i <= max_id; i++){
-                if(i != pid)
+                if(i != id)
                     sendMessages(1, (PORT + i));
             }
             sem_wait(&election_timer_mutex);
@@ -298,37 +296,37 @@ int checkLeader(){
             sem_post(&election_timer_mutex);
 
         }    
-        else if(leader_pid < 0 && election_timer > 0 && (clock() - election_timer) > (max_id - pid)*10){
+        else if(leader_id < 0 && election_timer > 0 && (clock() - election_timer) > (max_id - id)*10){
             printf("Becoming new leader \n");
             //declares itself as leader if no new messages
             for(int i = 1; i <= max_id; i++){
-                if(i != pid)
+                if(i != id)
                     sendMessages(3, (PORT + i));
             }
             sem_wait(&leader_mutex);
             sem_wait(&election_timer_mutex);
-                leader_pid = pid;
+                leader_id = id;
                 election_timer = -1;
             sem_post(&leader_mutex);
             sem_post(&election_timer_mutex);
         }
-        else if(leader_pid > 0 && !disabled){
-            if(election_timer < 0 && leader_pid != pid){
-                // printf("Sending ALIVE \n");
-                sendMessages(4, (PORT + leader_pid)); //sends alive msg
+        else if(leader_id > 0 && !disabled){
+            if(election_timer < 0 && leader_id != id){
+                printf("Sending ALIVE \n");
+                sendMessages(4, (PORT + leader_id));
                 sem_wait(&election_timer_mutex);
                     election_timer = clock();
                 sem_post(&election_timer_mutex);
                 
-            }else if(election_timer > 0 && (clock() - election_timer) > (max_id - pid)*10){
+            }else if(election_timer > 0 && (clock() - election_timer) > (max_id - id)*10){
                 printf("Starting new election \n");
                 for(int i = 1; i <= max_id; i++){
-                    if(i != pid)
+                    if(i != id)
                         sendMessages(1, (PORT + i));
                 }
                 sem_wait(&leader_mutex);
                 sem_wait(&election_timer_mutex);
-                    leader_pid = -1;
+                    leader_id = -1;
                     election_timer = clock();
                 sem_post(&leader_mutex);
                 sem_post(&election_timer_mutex);
@@ -358,8 +356,8 @@ int main(int argc, char** argv) {
     sem_init(&sent_msgs_count_mutex, 0, 1); 
     sem_init(&recv_msgs_count_mutex, 0, 1); 
 
-    pid = atoi(argv[1]);
-    printf("pid %d\n", pid);
+    id = atoi(argv[1]);
+    printf("id %d\n", id);
     max_id = atoi(argv[2]); 
 
     myThreads[0] = thread(keycommands);
